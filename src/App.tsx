@@ -160,22 +160,14 @@ export default function App() {
   };
 
   const handleSendTestRow = async () => {
-    if (!sheetConfig || !sheetConfig.spreadsheetId) {
-      throw new Error('Primero vincula una hoja de Google Sheets en la configuración.');
-    }
-
-    let currentToken = token;
-    if (!currentToken) {
-      const res = await googleSignIn();
-      currentToken = res.accessToken;
-      setUser(res.user);
-      setToken(currentToken);
+    if (!sheetConfig) {
+      throw new Error('Primero vincula una hoja o ingresa la URL de la aplicación web.');
     }
 
     const testResponse: SurveyResponse = {
       id: `TEST-${Date.now().toString(36).toUpperCase()}`,
       timestamp: new Date().toLocaleString('es-ES'),
-      q1_carrera_ciclo: 'Prueba Docente - Ingeniería Demo',
+      q1_carrera_ciclo: 'Ingeniería de Sistemas (Prueba)',
       q2_materias_perdidas: 0,
       q3_ciclo_mas_alto: 4,
       q4_demora_examenes: 2,
@@ -201,7 +193,39 @@ export default function App() {
       syncedToGoogleSheets: true,
     };
 
-    await appendResponseToSheet(currentToken, sheetConfig.spreadsheetId, testResponse);
+    let sent = false;
+
+    // 1. If Webhook is configured, send via Webhook (no OAuth required!)
+    if (sheetConfig.webhookUrl) {
+      sent = await sendToWebhook(sheetConfig.webhookUrl, testResponse);
+    }
+
+    // 2. If direct OAuth token is available, also append via Sheets API
+    if (!sent && sheetConfig.spreadsheetId && sheetConfig.spreadsheetId !== 'webhook-sheets') {
+      let currentToken = token;
+      if (!currentToken) {
+        try {
+          const res = await googleSignIn();
+          currentToken = res.accessToken;
+          setUser(res.user);
+          setToken(currentToken);
+        } catch {
+          // popup blocked
+        }
+      }
+
+      if (currentToken) {
+        await appendResponseToSheet(currentToken, sheetConfig.spreadsheetId, testResponse);
+        sent = true;
+      }
+    }
+
+    if (!sent) {
+      throw new Error(
+        'Por favor ingresa la URL de la Aplicación Web (Webhook) de Apps Script para conectar tu hoja sin errores.'
+      );
+    }
+
     showToast('¡Fila de prueba insertada con éxito en Google Sheets!', 'success');
   };
 
@@ -228,8 +252,17 @@ export default function App() {
 
     let synced = false;
 
-    // Background sync via direct Google Sheets API if configured
-    if (sheetConfig && sheetConfig.spreadsheetId && sheetConfig.spreadsheetId !== 'webhook-only') {
+    // 1. Send via Webhook if configured (preferred: 100% reliable for any student)
+    if (sheetConfig?.webhookUrl) {
+      try {
+        synced = await sendToWebhook(sheetConfig.webhookUrl, newResponse);
+      } catch (err) {
+        console.warn('Webhook dispatch notice:', err);
+      }
+    }
+
+    // 2. Or direct Sheets API if token available
+    if (!synced && sheetConfig?.spreadsheetId && sheetConfig.spreadsheetId !== 'webhook-sheets') {
       try {
         let currentToken = token;
         if (!currentToken) {
@@ -242,16 +275,6 @@ export default function App() {
         }
       } catch (err: any) {
         console.warn('Google Sheets background sync notice:', err);
-      }
-    }
-
-    // Background sync via Webhook if configured
-    if (sheetConfig?.webhookUrl) {
-      try {
-        await sendToWebhook(sheetConfig.webhookUrl, newResponse);
-        synced = true;
-      } catch (err) {
-        console.warn('Webhook dispatch notice:', err);
       }
     }
 

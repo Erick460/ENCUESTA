@@ -37,10 +37,10 @@ export const SURVEY_QUESTIONS: QuestionDefinition[] = [
     number: 1,
     code: 'Q1',
     section: 1,
-    title: 'Carrera y ciclo',
-    description: 'Indica el programa universitario que cursas y tu ciclo o semestre.',
+    title: 'Carrera',
+    description: 'Indica la carrera universitaria o programa de pregrado que cursas.',
     type: 'text',
-    placeholder: 'Ejemplo: Ingeniería Civil - 7.° ciclo',
+    placeholder: 'Ejemplo: Ingeniería de Sistemas',
     required: true,
   },
   {
@@ -363,7 +363,7 @@ export const SURVEY_QUESTIONS: QuestionDefinition[] = [
 export const CSV_HEADERS = [
   'ID',
   'Marca Temporal',
-  'Q1 Carrera y Ciclo',
+  'Q1 Carrera',
   'Q2 Materias Perdidas',
   'Q3 Ciclo Más Alto Matriculado',
   'Q4 Demora Exámenes (1-5)',

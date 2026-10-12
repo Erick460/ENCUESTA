@@ -364,7 +364,7 @@ export const ResponsesDashboard: React.FC<ResponsesDashboardProps> = ({
             <thead className="bg-slate-50 text-slate-700 font-semibold border-b border-slate-200 uppercase text-[10px] tracking-wider">
               <tr>
                 <th className="px-4 py-3">Fecha</th>
-                <th className="px-4 py-3">Q1 Carrera / Ciclo</th>
+                <th className="px-4 py-3">Q1 Carrera</th>
                 <th className="px-3 py-3 text-center">Q2 Reprobadas</th>
                 <th className="px-3 py-3 text-center">Q3 Ciclo Max</th>
                 <th className="px-3 py-3 text-center">Q4 Exámenes</th>

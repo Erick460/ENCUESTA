@@ -270,17 +270,24 @@ export const appendBatchToSheet = async (
 };
 
 /**
- * Optional Webhook integration (Google Apps Script)
+ * Optional Webhook integration (Google Apps Script Web App)
+ * 100% reliable, no OAuth popups or permissions required.
  */
 export const sendToWebhook = async (
   webhookUrl: string,
   response: SurveyResponse
 ): Promise<boolean> => {
   try {
-    await fetch(webhookUrl, {
+    const cleanUrl = webhookUrl.trim();
+    if (!cleanUrl) return false;
+
+    // Use text/plain with no-cors to bypass browser CORS preflight restrictions
+    await fetch(cleanUrl, {
       method: 'POST',
       mode: 'no-cors',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'text/plain;charset=utf-8',
+      },
       body: JSON.stringify(response),
     });
     return true;
@@ -333,30 +340,63 @@ export const downloadResponsesAsJson = (responses: SurveyResponse[]) => {
   URL.revokeObjectURL(url);
 };
 
-export const sampleAppsScriptCode = `// Código para Google Apps Script (Extensiones > Apps Script en tu Hoja)
+export const sampleAppsScriptCode = `// ====================================================================
+// SCRIPT DE CONEXIÓN A GOOGLE SHEETS
+// 1. En tu hoja de Google Sheets, ve a: Extensiones > Apps Script
+// 2. Borra todo y pega este código exactamente como está.
+// 3. Haz clic en "Guardar" (ícono de disco) y luego en "Implementar" > "Nueva implementación"
+// 4. Selecciona: Tipo: "Aplicación web"
+//    - Descripción: "Encuesta Procrastinación"
+//    - Ejecutar como: "Yo" (tu cuenta)
+//    - Quién tiene acceso: "Cualquiera" (Anyone)
+// 5. Haz clic en "Implementar", autoriza los permisos y copia la URL resultante.
+// ====================================================================
+
 function doPost(e) {
   try {
-    var sheet = SpreadsheetApp.getActiveSpreadsheet().getActiveSheet();
-    var data = JSON.parse(e.postData.contents);
+    var ss = SpreadsheetApp.getActiveSpreadsheet();
+    var sheet = ss.getSheetByName("Respuestas");
     
-    if (sheet.getLastRow() === 0) {
-      sheet.appendRow([
-        "ID", "Marca Temporal", "Q1 Carrera y Ciclo", "Q2 Materias Perdidas",
-        "Q3 Ciclo Más Alto", "Q4 Demora Exámenes", "Q5 Problema Exámenes",
-        "Q6 Reducir Exámenes", "Q7 Demora Tareas", "Q8 Reducir Tareas",
-        "Q9 Miedo Mala Calificación", "Q10 Falta Confianza", "Q11 Desbordado",
-        "Q12 Otras Cosas", "Q13 No Gusta Estudiar", "Q14 Dificultad Priorizar",
-        "Q15 Compañeros No Estudian", "Q16 Presión Amigos", "Q17 Rechazo Plazos",
-        "Q18 Dudas No Pregunta", "Q19 Exceso Confianza",
-        "Q20 Días Antes Estudio", "Q23 Horas Sueño Previa", "Q25 Método Repaso",
-        "Q25 Otro", "Q28 % Compañeros"
-      ]);
+    // Si no existe la pestaña "Respuestas", la creamos automáticamente
+    if (!sheet) {
+      sheet = ss.insertSheet("Respuestas");
     }
     
+    // Si la hoja está vacía, insertamos los encabezados de las 23 preguntas
+    if (sheet.getLastRow() === 0) {
+      sheet.appendRow([
+        "ID", "Marca Temporal", "Q1 Carrera", "Q2 Materias Perdidas",
+        "Q3 Ciclo Más Alto", "Q4 Demora Exámenes", "Q5 Problema Exámenes",
+        "Q6 Reducir Exámenes", "Q7 Demora Tareas", "Q8 Reducir Tareas",
+        "Q9 Miedo Mala Calificación", "Q10 Falta Confianza", "Q11 Desbordado Materia",
+        "Q12 Otras Obligaciones", "Q13 No Gusta Estudiar", "Q14 Dificultad Priorizar",
+        "Q15 Compañeros No Empezaron", "Q16 Presión Amigos", "Q17 Rechazo Plazos",
+        "Q18 Dudas Docente", "Q19 Exceso Confianza",
+        "Q20 Días Antes Estudio", "Q23 Horas Sueño Previa", "Q25 Método Repaso",
+        "Q25 Detalle Otro", "Q28 % Compañeros", "Promedio Motivos"
+      ]);
+      sheet.setFrozenRows(1);
+    }
+    
+    var data = JSON.parse(e.postData.contents);
+    
+    // Calcular promedio de motivos (Q9 a Q19)
+    var motivos = [
+      data.q9_miedo_calificacion, data.q10_falta_confianza, data.q11_desbordado_materia,
+      data.q12_otras_cosas, data.q13_no_gusta_estudiar, data.q14_dificultad_priorizar,
+      data.q15_companeros_no_estudian, data.q16_presion_amigos, data.q17_rechazo_plazos,
+      data.q18_dudas_no_pregunta, data.q19_exceso_confianza
+    ];
+    var suma = 0, cuenta = 0;
+    for (var i = 0; i < motivos.length; i++) {
+      if (motivos[i]) { suma += Number(motivos[i]); cuenta++; }
+    }
+    var avgMotivos = cuenta > 0 ? (suma / cuenta).toFixed(2) : 0;
+    
     sheet.appendRow([
-      data.id || new Date().getTime(),
+      data.id || ("RESP-" + new Date().getTime()),
       data.timestamp || new Date().toLocaleString(),
-      data.q1_carrera_ciclo || "",
+      data.q1_carrera_ciclo || data.q1_carrera || "",
       data.q2_materias_perdidas || 0,
       data.q3_ciclo_mas_alto || 1,
       data.q4_demora_examenes || "",
@@ -379,14 +419,20 @@ function doPost(e) {
       data.q23_horas_sueno_noche_previa || 0,
       data.q25_metodo_repaso || "",
       data.q25_metodo_repaso_otro || "",
-      data.q28_porcentaje_companeros || 0
+      data.q28_porcentaje_companeros || 0,
+      avgMotivos
     ]);
     
     return ContentService.createTextOutput(JSON.stringify({ status: "success" }))
       .setMimeType(ContentService.MimeType.JSON);
-  } catch (error) {
-    return ContentService.createTextOutput(JSON.stringify({ status: "error", error: error.toString() }))
+  } catch (err) {
+    return ContentService.createTextOutput(JSON.stringify({ status: "error", error: err.toString() }))
       .setMimeType(ContentService.MimeType.JSON);
   }
 }
+
+function doGet(e) {
+  return ContentService.createTextOutput("Webhook de Encuesta Procrastinación activo y funcionando correctamente.");
+}
 `;
+

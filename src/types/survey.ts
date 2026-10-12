@@ -2,7 +2,8 @@ export interface SurveyResponse {
   id: string;
   timestamp: string;
   // Q1 - Q3: Perfil Académico
-  q1_carrera_ciclo: string;
+  q1_carrera_ciclo: string; // Carrera
+  q1_carrera?: string;
   q2_materias_perdidas: number;
   q3_ciclo_mas_alto: number;
   // Q4 - Q8: Demora e Impacto

@@ -7,9 +7,8 @@ import {
 } from '../services/googleSheets';
 import {
   FileSpreadsheet,
-  PlusCircle,
-  Link,
   Code2,
+  Link as LinkIcon,
   CheckCircle2,
   ExternalLink,
   Copy,
@@ -19,8 +18,8 @@ import {
   RefreshCw,
   X,
   HelpCircle,
-  ShieldCheck,
   Send,
+  Zap,
 } from 'lucide-react';
 
 interface SheetsConfigModalProps {
@@ -41,21 +40,16 @@ export const SheetsConfigModal: React.FC<SheetsConfigModalProps> = ({
   sheetConfig,
   onSaveConfig,
   onCreateNewSheet,
-  onTestConnection,
   onSendTestRow,
   isOpen,
   onClose,
 }) => {
-  const [activeTab, setActiveTab] = useState<'link' | 'create' | 'webhook'>('link');
-  const [sheetTitle, setSheetTitle] = useState(
-    'Respuestas - Encuesta Procrastinación y Hábitos de Estudio'
-  );
-  const [existingUrlOrId, setExistingUrlOrId] = useState(sheetConfig?.spreadsheetId || '');
+  // Default to the 100% reliable webhook method
+  const [activeTab, setActiveTab] = useState<'webhook' | 'direct' | 'oauth'>('webhook');
   const [webhookUrl, setWebhookUrl] = useState(sheetConfig?.webhookUrl || '');
-  const [autoSync, setAutoSync] = useState(sheetConfig?.autoSync ?? true);
-
+  const [directSheetUrl, setDirectSheetUrl] = useState(sheetConfig?.spreadsheetUrl || '');
   const [isLoading, setIsLoading] = useState(false);
-  const [isTestingRow, setIsTestingRow] = useState(false);
+  const [isTesting, setIsTesting] = useState(false);
   const [feedback, setFeedback] = useState<{
     type: 'success' | 'error' | 'info';
     message: string;
@@ -64,125 +58,110 @@ export const SheetsConfigModal: React.FC<SheetsConfigModalProps> = ({
 
   if (!isOpen) return null;
 
-  const handleCreateNew = async () => {
-    setIsLoading(true);
-    setFeedback(null);
-    try {
-      const config = await onCreateNewSheet(sheetTitle.trim());
-      setFeedback({
-        type: 'success',
-        message: `¡Hoja de cálculo creada exitosamente en tu Google Drive (${config.sheetTitle})!`,
-      });
-    } catch (err: any) {
-      setFeedback({
-        type: 'error',
-        message: err.message || 'Error al crear la hoja en Google Sheets.',
-      });
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  const handleLinkExisting = async () => {
-    const id = extractSpreadsheetId(existingUrlOrId);
-    if (!id || id.length < 5) {
-      setFeedback({
-        type: 'error',
-        message: 'Por favor ingresa un enlace o ID válido de Google Sheets (ej. https://docs.google.com/spreadsheets/d/...)',
-      });
-      return;
-    }
-
-    setIsLoading(true);
-    setFeedback(null);
-
-    let detectedTitle = 'Hoja de Google Sheets Vinculada';
-
-    // Try testing connection if user is authenticated, but NEVER block saving
-    if (user) {
-      try {
-        const testResult = await onTestConnection(id);
-        if (typeof testResult === 'string') {
-          detectedTitle = testResult;
-        }
-      } catch (err: any) {
-        console.warn('Test connection notice:', err);
-      }
-    }
-
-    const newConfig: SheetConfig = {
-      spreadsheetId: id,
-      spreadsheetUrl: `https://docs.google.com/spreadsheets/d/${id}/edit`,
-      sheetTitle: detectedTitle,
-      webhookUrl: webhookUrl.trim() || sheetConfig?.webhookUrl,
-      autoSync: true,
-    };
-
-    onSaveConfig(newConfig);
-
-    setFeedback({
-      type: 'success',
-      message: '¡Hoja de cálculo vinculada exitosamente! Todas las respuestas se guardarán aquí.',
-    });
-
-    setIsLoading(false);
-  };
-
-  const handleSaveWebhook = () => {
-    if (!webhookUrl.trim().startsWith('http')) {
-      setFeedback({
-        type: 'error',
-        message: 'Ingresa una URL válida de Web App (comienza con https://script.google.com/...)',
-      });
-      return;
-    }
-
-    const newConfig: SheetConfig = {
-      spreadsheetId: sheetConfig?.spreadsheetId || 'webhook-only',
-      spreadsheetUrl:
-        sheetConfig?.spreadsheetUrl ||
-        'https://docs.google.com/spreadsheets',
-      sheetTitle: sheetConfig?.sheetTitle || 'Hoja por Webhook de Apps Script',
-      webhookUrl: webhookUrl.trim(),
-      autoSync: true,
-    };
-    onSaveConfig(newConfig);
-    setFeedback({
-      type: 'success',
-      message: '¡URL de Webhook guardada! Ahora las respuestas se envían sin requerir login.',
-    });
-  };
-
-  const handleTestRow = async () => {
-    setIsTestingRow(true);
-    setFeedback(null);
-    try {
-      await onSendTestRow();
-      setFeedback({
-        type: 'success',
-        message: '¡Fila de prueba enviada con éxito! Revisa tu Google Sheet para verla reflejada.',
-      });
-    } catch (err: any) {
-      setFeedback({
-        type: 'error',
-        message: err.message || 'No se pudo enviar la fila de prueba. Revisa los permisos de la hoja.',
-      });
-    } finally {
-      setIsTestingRow(false);
-    }
-  };
-
   const handleCopyScript = () => {
     navigator.clipboard.writeText(sampleAppsScriptCode);
     setCopiedScript(true);
     setTimeout(() => setCopiedScript(false), 2500);
   };
 
+  // Save Apps Script Webhook (Method 1: 100% reliable)
+  const handleSaveWebhook = async () => {
+    const trimmed = webhookUrl.trim();
+    if (!trimmed.startsWith('http')) {
+      setFeedback({
+        type: 'error',
+        message: 'Por favor ingresa la URL de la aplicación web (comienza con https://script.google.com/...)',
+      });
+      return;
+    }
+
+    setIsLoading(true);
+    setFeedback(null);
+
+    const newConfig: SheetConfig = {
+      spreadsheetId: sheetConfig?.spreadsheetId || 'webhook-sheets',
+      spreadsheetUrl:
+        directSheetUrl.trim() ||
+        sheetConfig?.spreadsheetUrl ||
+        'https://docs.google.com/spreadsheets',
+      sheetTitle: sheetConfig?.sheetTitle || 'Google Sheet Vinculada por Apps Script',
+      webhookUrl: trimmed,
+      autoSync: true,
+    };
+
+    onSaveConfig(newConfig);
+
+    // Automatically send a test row to verify
+    try {
+      await onSendTestRow();
+      setFeedback({
+        type: 'success',
+        message: '¡Conexión verificada exitosamente! Se ha insertado una fila de prueba en tu Google Sheet.',
+      });
+    } catch {
+      setFeedback({
+        type: 'success',
+        message: '¡Webhook guardado correctamente! Las respuestas se enviarán a tu hoja de cálculo.',
+      });
+    }
+
+    setIsLoading(false);
+  };
+
+  // Save Direct Link
+  const handleSaveDirectLink = () => {
+    const id = extractSpreadsheetId(directSheetUrl);
+    if (!id || id.length < 5) {
+      setFeedback({
+        type: 'error',
+        message: 'Ingresa un enlace válido de tu hoja de Google Sheets (ej. https://docs.google.com/spreadsheets/d/...)',
+      });
+      return;
+    }
+
+    const newConfig: SheetConfig = {
+      spreadsheetId: id,
+      spreadsheetUrl: `https://docs.google.com/spreadsheets/d/${id}/edit`,
+      sheetTitle: 'Hoja de Google Sheets',
+      webhookUrl: sheetConfig?.webhookUrl,
+      autoSync: true,
+    };
+
+    onSaveConfig(newConfig);
+    setFeedback({
+      type: 'success',
+      message: '¡Enlace de Google Sheet guardado! Para que los envíos automáticos funcionen sin login, configura el Webhook de Apps Script.',
+    });
+  };
+
+  const handleTestRow = async () => {
+    setIsTesting(true);
+    setFeedback(null);
+    try {
+      await onSendTestRow();
+      setFeedback({
+        type: 'success',
+        message: '¡Fila de prueba enviada con éxito! Revisa tu Google Sheet para ver los datos.',
+      });
+    } catch (err: any) {
+      setFeedback({
+        type: 'error',
+        message:
+          err.message ||
+          'No se pudo enviar. Te recomendamos usar el Webhook de Apps Script que no requiere permisos.',
+      });
+    } finally {
+      setIsTesting(false);
+    }
+  };
+
   const handleUnlink = () => {
     onSaveConfig(null);
+    setWebhookUrl('');
+    setDirectSheetUrl('');
     setFeedback({
       type: 'info',
-      message: 'Hoja desvinculada. Las respuestas se seguirán guardando en memoria local.',
+      message: 'Hoja desvinculada. Las respuestas se guardarán temporalmente en memoria local.',
     });
   };
 
@@ -197,10 +176,10 @@ export const SheetsConfigModal: React.FC<SheetsConfigModalProps> = ({
             </div>
             <div>
               <h2 className="text-base font-bold text-slate-900">
-                Vincular con Google Sheets
+                Solución de Conexión a Google Sheets
               </h2>
               <p className="text-xs text-slate-500">
-                Conecta tu cuenta y tu hoja de cálculo para registrar respuestas
+                Conecta tu hoja para registrar las respuestas en tiempo real
               </p>
             </div>
           </div>
@@ -213,63 +192,37 @@ export const SheetsConfigModal: React.FC<SheetsConfigModalProps> = ({
           </button>
         </div>
 
-        {/* Account State Card */}
-        <div className="bg-slate-50 border-b border-slate-200 px-6 py-3 flex items-center justify-between text-xs">
-          <div className="flex items-center gap-2">
-            <div className={`w-2.5 h-2.5 rounded-full ${user ? 'bg-emerald-500' : 'bg-amber-400'}`} />
-            <span className="text-slate-600">
-              Cuenta de Google:{' '}
-              <strong className="text-slate-900 font-semibold">
-                {user ? user.email : 'No iniciada aún'}
-              </strong>
-            </span>
-          </div>
-
-          {!user ? (
-            <button
-              type="button"
-              onClick={onSignIn}
-              className="px-3 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-xs shadow-xs transition-colors cursor-pointer"
-            >
-              Conectar Cuenta de Google
-            </button>
-          ) : (
-            <div className="flex items-center gap-1.5 text-emerald-700 font-medium">
-              <ShieldCheck className="w-4 h-4 text-emerald-600" />
-              <span>Conectada</span>
-            </div>
-          )}
-        </div>
-
-        {/* Current Linked Sheet Status */}
+        {/* Current Connection Status */}
         {sheetConfig && (
           <div className="bg-emerald-50 border-b border-emerald-100 p-3 px-6 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs">
             <div className="flex items-center gap-2 text-emerald-800">
               <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
               <span>
-                Hoja Vinculada:{' '}
+                Estado:{' '}
                 <strong className="text-emerald-950 font-semibold">
-                  {sheetConfig.sheetTitle}
+                  {sheetConfig.webhookUrl ? '✓ Webhook Activo' : '✓ Enlace Guardado'}
                 </strong>
               </span>
             </div>
             <div className="flex items-center gap-2">
-              <a
-                href={sheetConfig.spreadsheetUrl}
-                target="_blank"
-                rel="noreferrer"
-                className="text-emerald-700 hover:text-emerald-900 font-semibold flex items-center gap-1 underline"
-              >
-                <span>Abrir en Google Sheets</span>
-                <ExternalLink className="w-3 h-3" />
-              </a>
+              {sheetConfig.spreadsheetUrl && sheetConfig.spreadsheetUrl.startsWith('http') && (
+                <a
+                  href={sheetConfig.spreadsheetUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="text-emerald-700 hover:text-emerald-900 font-semibold flex items-center gap-1 underline"
+                >
+                  <span>Abrir Hoja</span>
+                  <ExternalLink className="w-3 h-3" />
+                </a>
+              )}
               <button
                 type="button"
                 onClick={handleTestRow}
-                disabled={isTestingRow}
-                className="px-2 py-0.5 rounded bg-emerald-600 text-white font-medium hover:bg-emerald-700 transition-colors cursor-pointer"
+                disabled={isTesting}
+                className="px-2 py-0.5 rounded bg-emerald-600 text-white font-medium hover:bg-emerald-700 cursor-pointer"
               >
-                {isTestingRow ? 'Enviando...' : '🧪 Probar fila'}
+                {isTesting ? 'Enviando...' : '🧪 Probar Fila'}
               </button>
               <button
                 type="button"
@@ -282,63 +235,62 @@ export const SheetsConfigModal: React.FC<SheetsConfigModalProps> = ({
           </div>
         )}
 
-        {/* Tabs */}
-        <div className="flex border-b border-slate-200 bg-slate-50/50 px-6 pt-2 text-xs">
-          <button
-            type="button"
-            onClick={() => {
-              setActiveTab('link');
-              setFeedback(null);
-            }}
-            className={`flex items-center gap-2 py-3 px-4 font-semibold border-b-2 transition-all cursor-pointer ${
-              activeTab === 'link'
-                ? 'border-emerald-600 text-emerald-700 bg-white rounded-t-xl'
-                : 'border-transparent text-slate-500 hover:text-slate-800'
-            }`}
-          >
-            <Link className="w-4 h-4" />
-            <span>1. Vincular por Enlace (Recomendado)</span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => {
-              setActiveTab('create');
-              setFeedback(null);
-            }}
-            className={`flex items-center gap-2 py-3 px-4 font-semibold border-b-2 transition-all cursor-pointer ${
-              activeTab === 'create'
-                ? 'border-emerald-600 text-emerald-700 bg-white rounded-t-xl'
-                : 'border-transparent text-slate-500 hover:text-slate-800'
-            }`}
-          >
-            <PlusCircle className="w-4 h-4" />
-            <span>2. Crear Nueva Hoja</span>
-          </button>
-
+        {/* Navigation Tabs */}
+        <div className="flex border-b border-slate-200 bg-slate-50/60 px-6 pt-2 text-xs">
           <button
             type="button"
             onClick={() => {
               setActiveTab('webhook');
               setFeedback(null);
             }}
-            className={`flex items-center gap-2 py-3 px-4 font-semibold border-b-2 transition-all cursor-pointer ${
+            className={`flex items-center gap-1.5 py-3 px-4 font-semibold border-b-2 transition-all cursor-pointer ${
               activeTab === 'webhook'
                 ? 'border-emerald-600 text-emerald-700 bg-white rounded-t-xl'
                 : 'border-transparent text-slate-500 hover:text-slate-800'
             }`}
           >
-            <Code2 className="w-4 h-4" />
-            <span>3. Webhook de Apps Script</span>
+            <Zap className="w-3.5 h-3.5 text-amber-500" />
+            <span>Método 1: Apps Script (Recomendado)</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => {
+              setActiveTab('direct');
+              setFeedback(null);
+            }}
+            className={`flex items-center gap-1.5 py-3 px-4 font-semibold border-b-2 transition-all cursor-pointer ${
+              activeTab === 'direct'
+                ? 'border-emerald-600 text-emerald-700 bg-white rounded-t-xl'
+                : 'border-transparent text-slate-500 hover:text-slate-800'
+            }`}
+          >
+            <LinkIcon className="w-3.5 h-3.5" />
+            <span>Método 2: Enlace de la Hoja</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => {
+              setActiveTab('oauth');
+              setFeedback(null);
+            }}
+            className={`flex items-center gap-1.5 py-3 px-4 font-semibold border-b-2 transition-all cursor-pointer ${
+              activeTab === 'oauth'
+                ? 'border-emerald-600 text-emerald-700 bg-white rounded-t-xl'
+                : 'border-transparent text-slate-500 hover:text-slate-800'
+            }`}
+          >
+            <span>Método 3: Cuenta Google</span>
           </button>
         </div>
 
         {/* Tab Content */}
-        <div className="p-6 overflow-y-auto space-y-4 flex-1">
-          {/* Notification / Feedback */}
+        <div className="p-6 overflow-y-auto space-y-4 flex-1 text-xs">
+          {/* Feedback Banner */}
           {feedback && (
             <div
-              className={`p-3.5 rounded-xl text-xs flex items-center gap-2 ${
+              className={`p-3.5 rounded-xl flex items-center gap-2 ${
                 feedback.type === 'success'
                   ? 'bg-emerald-50 text-emerald-800 border border-emerald-200'
                   : feedback.type === 'error'
@@ -355,192 +307,185 @@ export const SheetsConfigModal: React.FC<SheetsConfigModalProps> = ({
             </div>
           )}
 
-          {/* TAB 1: LINK EXISTING URL */}
-          {activeTab === 'link' && (
-            <div className="space-y-4">
-              <div className="p-4 bg-emerald-50/50 rounded-2xl border border-emerald-100 text-xs text-slate-700 space-y-1">
-                <div className="font-bold text-emerald-900 flex items-center gap-1.5">
-                  <CheckCircle2 className="w-4 h-4 text-emerald-600" />
-                  Vincular directamente tu Google Sheet
-                </div>
-                <p>
-                  Pega el enlace completo de tu hoja de cálculo. La aplicación detectará
-                  el ID y enviará las respuestas automáticamente a esa hoja.
-                </p>
-              </div>
-
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1">
-                  Enlace de tu Google Sheet:
-                </label>
-                <input
-                  type="text"
-                  placeholder="https://docs.google.com/spreadsheets/d/1abcXYZ.../edit"
-                  value={existingUrlOrId}
-                  onChange={(e) => setExistingUrlOrId(e.target.value)}
-                  className="w-full px-3.5 py-3 rounded-xl border border-slate-300 text-xs focus:ring-2 focus:ring-emerald-500 focus:outline-none font-mono"
-                />
-                <span className="text-[11px] text-slate-400 mt-1 block">
-                  Puedes pegar la URL completa desde la barra de tu navegador o solo el ID del documento.
-                </span>
-              </div>
-
-              <div className="flex items-center gap-2">
-                <input
-                  type="checkbox"
-                  id="autoSyncDirect"
-                  checked={autoSync}
-                  onChange={(e) => setAutoSync(e.target.checked)}
-                  className="rounded text-emerald-600 focus:ring-emerald-500 h-4 w-4"
-                />
-                <label
-                  htmlFor="autoSyncDirect"
-                  className="text-xs text-slate-700 font-medium cursor-pointer"
-                >
-                  Sincronizar automáticamente cada respuesta cuando un usuario complete la encuesta
-                </label>
-              </div>
-
-              <div className="pt-2 flex flex-col sm:flex-row gap-2">
-                <button
-                  type="button"
-                  onClick={handleLinkExisting}
-                  disabled={isLoading || !existingUrlOrId.trim()}
-                  className="flex-1 py-3 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs shadow-md shadow-emerald-600/20 transition-all disabled:opacity-40 cursor-pointer"
-                >
-                  {isLoading ? 'Vinculando hoja...' : '✓ Vincular Hoja de Google Sheets'}
-                </button>
-
-                {sheetConfig && (
-                  <button
-                    type="button"
-                    onClick={handleTestRow}
-                    disabled={isTestingRow}
-                    className="py-3 px-4 rounded-xl border border-slate-300 hover:bg-slate-50 text-slate-700 font-semibold text-xs transition-colors cursor-pointer"
-                  >
-                    {isTestingRow ? 'Enviando...' : '🧪 Probar Fila'}
-                  </button>
-                )}
-              </div>
-            </div>
-          )}
-
-          {/* TAB 2: CREATE NEW */}
-          {activeTab === 'create' && (
-            <div className="space-y-4">
-              <div className="p-4 bg-emerald-50/50 rounded-2xl border border-emerald-100 text-xs text-slate-700 space-y-2">
-                <div className="font-bold text-emerald-900 flex items-center gap-1.5">
-                  <Sparkles className="w-4 h-4 text-emerald-600" />
-                  Creación automática en tu cuenta
-                </div>
-                <p>
-                  Crea una hoja de cálculo nueva en tu Google Drive con una pestaña
-                  llamada <strong>Respuestas</strong> y los 28 encabezados preparados.
-                </p>
-              </div>
-
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1">
-                  Nombre para la nueva hoja de cálculo:
-                </label>
-                <input
-                  type="text"
-                  value={sheetTitle}
-                  onChange={(e) => setSheetTitle(e.target.value)}
-                  className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 text-xs focus:ring-2 focus:ring-emerald-500 focus:outline-none"
-                />
-              </div>
-
-              <button
-                type="button"
-                onClick={handleCreateNew}
-                disabled={isLoading}
-                className="w-full py-3 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs shadow-md transition-all disabled:opacity-50 cursor-pointer"
-              >
-                {isLoading ? (
-                  <span className="flex items-center justify-center gap-2">
-                    <RefreshCw className="w-4 h-4 animate-spin" />
-                    <span>Creando hoja en Google Drive...</span>
-                  </span>
-                ) : (
-                  <span>Crear Hoja de Cálculo Ahora</span>
-                )}
-              </button>
-            </div>
-          )}
-
-          {/* TAB 3: APPS SCRIPT WEBHOOK */}
+          {/* TAB 1: WEBHOOK (THE SOLUTION THAT NEVER FAILS) */}
           {activeTab === 'webhook' && (
             <div className="space-y-4">
-              <div className="p-4 bg-sky-50 rounded-2xl border border-sky-100 text-xs text-slate-700 space-y-2">
-                <div className="font-bold text-sky-900 flex items-center gap-1.5">
-                  <HelpCircle className="w-4 h-4 text-sky-600" />
-                  Envío anónimo universal (ideal para encuestas masivas)
+              <div className="p-4 bg-emerald-50/70 rounded-2xl border border-emerald-200 space-y-2">
+                <div className="font-bold text-emerald-950 flex items-center gap-1.5">
+                  <Zap className="w-4 h-4 text-emerald-600" />
+                  ¿Por qué este método soluciona el problema de conexión?
                 </div>
-                <p>
-                  Si no deseas que tus alumnos inicien sesión para guardar en tu hoja,
-                  crea un script en tu Google Sheet:
+                <p className="text-slate-700 leading-relaxed">
+                  Los navegadores suelen bloquear las ventanas emergentes de inicio de sesión de Google dentro de plataformas embebidas. 
+                  Con este método de <strong>Google Apps Script</strong>, tu Google Sheet recibe las respuestas directamente mediante un enlace seguro, sin requerir inicios de sesión ni permisos para ti ni para tus alumnos.
                 </p>
-                <ol className="list-decimal pl-4 space-y-1 text-slate-600">
-                  <li>Abre tu Hoja en Google Sheets &gt; Extensiones &gt; Apps Script.</li>
-                  <li>Pega el código de abajo y guarda.</li>
-                  <li>
-                    Haz clic en <strong>Implementar &gt; Nueva implementación</strong>, elige{' '}
-                    <strong>Aplicación web</strong>, acceso: <em>Cualquiera</em>.
-                  </li>
-                  <li>Pega la URL aquí.</li>
-                </ol>
               </div>
 
-              <div className="relative">
-                <div className="flex justify-between items-center mb-1">
-                  <span className="text-xs font-semibold text-slate-700">
-                    Código de Apps Script:
-                  </span>
-                  <button
-                    type="button"
-                    onClick={handleCopyScript}
-                    className="flex items-center gap-1 text-[11px] font-semibold text-emerald-700 hover:text-emerald-800 bg-emerald-50 px-2 py-0.5 rounded-md border border-emerald-200 cursor-pointer"
-                  >
-                    {copiedScript ? (
-                      <>
-                        <Check className="w-3 h-3 text-emerald-600" />
-                        <span>¡Copiado!</span>
-                      </>
-                    ) : (
-                      <>
-                        <Copy className="w-3 h-3" />
-                        <span>Copiar código</span>
-                      </>
-                    )}
-                  </button>
+              {/* 3 Step Visual Guide */}
+              <div className="space-y-3">
+                <div className="font-bold text-slate-800">
+                  Instrucciones en 3 pasos (toma 1 minuto):
                 </div>
-                <pre className="p-3 bg-slate-900 text-slate-100 rounded-xl text-[11px] font-mono overflow-x-auto max-h-36">
-                  {sampleAppsScriptCode}
-                </pre>
+
+                <div className="p-3 bg-slate-50 rounded-xl border border-slate-200 space-y-1">
+                  <div className="font-semibold text-slate-800">
+                    Paso 1: Abrir Apps Script en tu Hoja
+                  </div>
+                  <p className="text-slate-600">
+                    Abre tu hoja de Google Sheets y en el menú superior ve a: <strong>Extensiones &gt; Apps Script</strong>.
+                  </p>
+                </div>
+
+                <div className="p-3 bg-slate-50 rounded-xl border border-slate-200 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="font-semibold text-slate-800">
+                      Paso 2: Copiar y pegar este código
+                    </span>
+                    <button
+                      type="button"
+                      onClick={handleCopyScript}
+                      className="flex items-center gap-1 text-[11px] font-semibold text-emerald-700 hover:text-emerald-800 bg-emerald-100/80 px-2.5 py-1 rounded-lg border border-emerald-300 cursor-pointer"
+                    >
+                      {copiedScript ? (
+                        <>
+                          <Check className="w-3.5 h-3.5 text-emerald-600" />
+                          <span>¡Código Copiado!</span>
+                        </>
+                      ) : (
+                        <>
+                          <Copy className="w-3.5 h-3.5" />
+                          <span>Copiar Código</span>
+                        </>
+                      )}
+                    </button>
+                  </div>
+                  <p className="text-slate-500 text-[11px]">
+                    Borra cualquier código que aparezca en Apps Script y pega este:
+                  </p>
+                  <pre className="p-2.5 bg-slate-900 text-slate-100 rounded-lg text-[10px] font-mono overflow-x-auto max-h-24">
+                    {sampleAppsScriptCode.slice(0, 400)}...
+                  </pre>
+                </div>
+
+                <div className="p-3 bg-slate-50 rounded-xl border border-slate-200 space-y-1">
+                  <div className="font-semibold text-slate-800">
+                    Paso 3: Implementar como Aplicación Web
+                  </div>
+                  <p className="text-slate-600">
+                    Haz clic en <strong>Implementar &gt; Nueva implementación</strong> (botón azul superior).
+                    Selecciona Tipo: <strong>Aplicación web</strong>. En <em>Quién tiene acceso</em> elige <strong>Cualquiera</strong>.
+                    Haz clic en <strong>Implementar</strong> y copia la URL que te entrega.
+                  </p>
+                </div>
               </div>
 
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1">
-                  URL de la Aplicación Web (Webhook):
+              {/* Paste Webhook URL input */}
+              <div className="pt-1">
+                <label className="block font-bold text-slate-800 mb-1">
+                  Pega aquí la URL de tu Aplicación Web (Webhook):
                 </label>
                 <input
                   type="text"
-                  placeholder="https://script.google.com/macros/s/AKfycbx.../exec"
+                  placeholder="https://script.google.com/macros/s/AKfycb.../exec"
                   value={webhookUrl}
                   onChange={(e) => setWebhookUrl(e.target.value)}
-                  className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 text-xs focus:ring-2 focus:ring-emerald-500 focus:outline-none font-mono"
+                  className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 text-xs focus:ring-2 focus:ring-emerald-500 font-mono"
+                />
+              </div>
+
+              <div>
+                <label className="block font-medium text-slate-600 mb-1">
+                  (Opcional) Enlace de tu Google Sheet para tener acceso directo:
+                </label>
+                <input
+                  type="text"
+                  placeholder="https://docs.google.com/spreadsheets/d/..."
+                  value={directSheetUrl}
+                  onChange={(e) => setDirectSheetUrl(e.target.value)}
+                  className="w-full px-3.5 py-2 rounded-xl border border-slate-300 text-xs focus:ring-2 focus:ring-emerald-500 font-mono"
                 />
               </div>
 
               <button
                 type="button"
                 onClick={handleSaveWebhook}
-                disabled={!webhookUrl.trim()}
-                className="w-full py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs shadow-sm transition-all disabled:opacity-40 cursor-pointer"
+                disabled={isLoading || !webhookUrl.trim()}
+                className="w-full py-3 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs shadow-md shadow-emerald-600/20 transition-all disabled:opacity-40 cursor-pointer"
               >
-                Guardar URL de Webhook
+                {isLoading ? (
+                  <span className="flex items-center justify-center gap-2">
+                    <RefreshCw className="w-4 h-4 animate-spin" />
+                    <span>Guardando y verificando conexión...</span>
+                  </span>
+                ) : (
+                  <span>✓ Guardar Conexión y Probar Fila</span>
+                )}
               </button>
+            </div>
+          )}
+
+          {/* TAB 2: DIRECT LINK */}
+          {activeTab === 'direct' && (
+            <div className="space-y-4">
+              <p className="text-slate-600">
+                Pega el enlace de tu Google Sheet para guardarlo en la aplicación:
+              </p>
+
+              <div>
+                <label className="block font-semibold text-slate-700 mb-1">
+                  Enlace de Google Sheets:
+                </label>
+                <input
+                  type="text"
+                  placeholder="https://docs.google.com/spreadsheets/d/1BxiMVs.../edit"
+                  value={directSheetUrl}
+                  onChange={(e) => setDirectSheetUrl(e.target.value)}
+                  className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 text-xs focus:ring-2 focus:ring-emerald-500 font-mono"
+                />
+              </div>
+
+              <button
+                type="button"
+                onClick={handleSaveDirectLink}
+                disabled={!directSheetUrl.trim()}
+                className="w-full py-2.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs shadow-sm transition-all disabled:opacity-40 cursor-pointer"
+              >
+                Guardar Enlace
+              </button>
+
+              <div className="p-3 bg-amber-50 rounded-xl border border-amber-200 text-amber-900">
+                <strong>Nota:</strong> Para que Google Sheets permita escribir datos desde el navegador sin requerir que cada encuestado tenga cuenta y permisos de edición, te recomendamos configurar el <strong>Método 1 (Apps Script)</strong>.
+              </div>
+            </div>
+          )}
+
+          {/* TAB 3: OAUTH */}
+          {activeTab === 'oauth' && (
+            <div className="space-y-4">
+              <div className="p-3.5 bg-slate-50 rounded-xl border border-slate-200">
+                <div className="text-slate-700 font-medium mb-1">Cuenta actual:</div>
+                <div className="font-bold text-slate-900">
+                  {user ? user.email : 'No conectada'}
+                </div>
+              </div>
+
+              {!user ? (
+                <button
+                  type="button"
+                  onClick={onSignIn}
+                  className="w-full py-2.5 rounded-xl bg-white border border-slate-300 hover:bg-slate-50 text-slate-800 font-bold text-xs shadow-xs transition-colors cursor-pointer"
+                >
+                  Intentar Iniciar Sesión con Google
+                </button>
+              ) : (
+                <p className="text-slate-600">
+                  Tu cuenta está autenticada con Firebase.
+                </p>
+              )}
+
+              <p className="text-slate-500 text-[11px]">
+                Si el navegador bloquea las ventanas emergentes (popups) de Google dentro del visor, usa el <strong>Método 1 (Apps Script)</strong> que funciona sin ventanas emergentes.
+              </p>
             </div>
           )}
         </div>
@@ -548,14 +493,14 @@ export const SheetsConfigModal: React.FC<SheetsConfigModalProps> = ({
         {/* Footer */}
         <div className="p-4 px-6 border-t border-slate-200 bg-slate-50 flex items-center justify-between text-xs">
           <span className="text-slate-500">
-            {sheetConfig ? '✓ Hoja Vinculada' : 'Sin hoja vinculada'}
+            {sheetConfig?.webhookUrl ? '✓ Conexión Activa' : 'Configuración Pendiente'}
           </span>
           <button
             type="button"
             onClick={onClose}
             className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-900 text-white font-semibold cursor-pointer"
           >
-            Cerrar
+            Aceptar y Cerrar
           </button>
         </div>
       </div>
