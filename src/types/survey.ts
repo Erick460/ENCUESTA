@@ -1,17 +1,17 @@
 export interface SurveyResponse {
   id: string;
-  timestamp: string; // ISO string & formatted local date
-  // Q1 - Q2
+  timestamp: string;
+  // Q1 - Q3: Perfil Académico
   q1_carrera_ciclo: string;
-  q2_asignatura_fecha: string;
-  // Q3 - Q8 (1 to 5)
-  q3_demora_examenes: number;
-  q4_problema_examenes: number;
-  q5_reducir_examenes: number;
-  q6_demora_tareas: number;
-  q7_problema_tareas: number;
+  q2_materias_perdidas: number;
+  q3_ciclo_mas_alto: number;
+  // Q4 - Q8: Demora e Impacto
+  q4_demora_examenes: number;
+  q5_problema_examenes: number;
+  q6_reducir_examenes: number;
+  q7_demora_tareas: number;
   q8_reducir_tareas: number;
-  // Q9 - Q19 (1 to 5)
+  // Q9 - Q19: Motivos (1 a 5)
   q9_miedo_calificacion: number;
   q10_falta_confianza: number;
   q11_desbordado_materia: number;
@@ -23,20 +23,13 @@ export interface SurveyResponse {
   q17_rechazo_plazos: number;
   q18_dudas_no_pregunta: number;
   q19_exceso_confianza: number;
-  // Q20 - Q28
+  // Q20, Q23, Q25, Q28: Hábitos reales
   q20_dias_antes_estudio: number;
-  q21_horas_ultimos_3_dias: number;
-  q22_horas_11_dias_previos: number;
   q23_horas_sueno_noche_previa: number;
-  q24_horario_calendario: string; // 'Sí' | 'No' | 'A veces'
-  q25_metodo_repaso: string; // 'Releer apuntes' | 'Resolver ejercicios o autoevaluarme' | 'Otro'
+  q25_metodo_repaso: string; // 'Releer apuntes' | 'Resolver ejercicios o autoevaluarme' | 'Estudiar en grupo' | 'Otro'
   q25_metodo_repaso_otro?: string;
-  q26_anticipacion_entrega: string;
-  q27_consulta_docente: string;
-  q28_porcentaje_companeros: number; // 0 to 100
-  // Derived analytical metrics
-  indice_procrastinacion_examenes?: number; // Q3
-  indice_procrastinacion_tareas?: number; // Q6
+  q28_porcentaje_companeros: number;
+  // Metadata
   promedio_motivos?: number;
   syncedToGoogleSheets?: boolean;
 }
@@ -44,6 +37,7 @@ export interface SurveyResponse {
 export interface QuestionDefinition {
   id: string;
   number: number;
+  code: string; // e.g. "Q1", "Q23", "Q25"
   title: string;
   description?: string;
   section: number;
@@ -63,5 +57,5 @@ export interface SurveySection {
   title: string;
   subtitle: string;
   badge: string;
-  questions: number[]; // question numbers
+  questions: string[]; // question codes e.g. ["Q1", "Q2", "Q3"]
 }

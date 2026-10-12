@@ -10,7 +10,6 @@ import {
   googleSignIn,
   logout,
   getAccessToken,
-  setCachedToken,
 } from './services/auth';
 import {
   SheetConfig,
@@ -32,13 +31,7 @@ import { SurveyForm } from './components/SurveyForm';
 import { SurveyCompleted } from './components/SurveyCompleted';
 import { ResponsesDashboard } from './components/ResponsesDashboard';
 import { SheetsConfigModal } from './components/SheetsConfigModal';
-import {
-  FileSpreadsheet,
-  CheckCircle2,
-  AlertCircle,
-  Sparkles,
-  Info,
-} from 'lucide-react';
+import { CheckCircle2, AlertCircle } from 'lucide-react';
 
 export default function App() {
   const [user, setUser] = useState<User | null>(null);
@@ -59,29 +52,22 @@ export default function App() {
 
   // Initialize Auth & load local storage
   useEffect(() => {
-    // 1. Load stored sheet config
     const savedConfig = getStoredSheetConfig();
     if (savedConfig) {
       setSheetConfig(savedConfig);
     }
 
-    // 2. Load stored responses
     const savedResponses = getStoredResponses();
     if (savedResponses.length > 0) {
       setResponses(savedResponses);
     }
 
-    // 3. Setup Firebase Auth listener
-    const unsubscribe = initAuth(
-      (currentUser, accessToken) => {
-        setUser(currentUser);
+    const unsubscribe = initAuth((currentUser, accessToken) => {
+      setUser(currentUser);
+      if (accessToken) {
         setToken(accessToken);
-      },
-      () => {
-        setUser(null);
-        setToken(null);
       }
-    );
+    });
 
     return () => unsubscribe();
   }, []);
@@ -98,15 +84,10 @@ export default function App() {
       const result = await googleSignIn();
       setUser(result.user);
       setToken(result.accessToken);
-      showToast(`¡Bienvenido, ${result.user.displayName || result.user.email}!`, 'success');
-
-      // If user doesn't have a sheet connected, open config modal to help them create one
-      if (!sheetConfig) {
-        setIsConfigModalOpen(true);
-      }
+      showToast(`Cuenta conectada: ${result.user.email}`, 'success');
     } catch (err: any) {
       console.error('Sign in error:', err);
-      showToast('No se pudo iniciar sesión con Google.', 'error');
+      showToast('Error al conectar con Google. Permite las ventanas emergentes.', 'error');
     }
   };
 
@@ -115,7 +96,7 @@ export default function App() {
       await logout();
       setUser(null);
       setToken(null);
-      showToast('Sesión de Google cerrada.', 'info');
+      showToast('Sesión cerrada.', 'info');
     } catch (err) {
       console.error('Sign out error:', err);
     }
@@ -125,7 +106,7 @@ export default function App() {
     setSheetConfig(config);
     saveStoredSheetConfig(config);
     if (config) {
-      showToast(`Hoja conectada: ${config.sheetTitle}`, 'success');
+      showToast(`Google Sheet conectado: ${config.sheetTitle}`, 'success');
     }
   };
 
@@ -154,7 +135,7 @@ export default function App() {
     return newConfig;
   };
 
-  const handleTestConnection = async (spreadsheetId: string): Promise<boolean> => {
+  const handleTestConnection = async (spreadsheetId: string): Promise<string | boolean> => {
     let currentToken = token;
     if (!currentToken) {
       const res = await googleSignIn();
@@ -170,15 +151,61 @@ export default function App() {
       }
     );
 
-    if (!res.ok) {
-      throw new Error(
-        'No se pudo acceder a la hoja. Verifica que tengas permisos de edición con esta cuenta.'
-      );
+    if (res.ok) {
+      const data = await res.json();
+      return data.properties?.title || true;
     }
 
     return true;
   };
 
+  const handleSendTestRow = async () => {
+    if (!sheetConfig || !sheetConfig.spreadsheetId) {
+      throw new Error('Primero vincula una hoja de Google Sheets en la configuración.');
+    }
+
+    let currentToken = token;
+    if (!currentToken) {
+      const res = await googleSignIn();
+      currentToken = res.accessToken;
+      setUser(res.user);
+      setToken(currentToken);
+    }
+
+    const testResponse: SurveyResponse = {
+      id: `TEST-${Date.now().toString(36).toUpperCase()}`,
+      timestamp: new Date().toLocaleString('es-ES'),
+      q1_carrera_ciclo: 'Prueba Docente - Ingeniería Demo',
+      q2_materias_perdidas: 0,
+      q3_ciclo_mas_alto: 4,
+      q4_demora_examenes: 2,
+      q5_problema_examenes: 2,
+      q6_reducir_examenes: 4,
+      q7_demora_tareas: 2,
+      q8_reducir_tareas: 4,
+      q9_miedo_calificacion: 1,
+      q10_falta_confianza: 1,
+      q11_desbordado_materia: 1,
+      q12_otras_cosas: 2,
+      q13_no_gusta_estudiar: 1,
+      q14_dificultad_priorizar: 1,
+      q15_companeros_no_estudian: 1,
+      q16_presion_amigos: 1,
+      q17_rechazo_plazos: 1,
+      q18_dudas_no_pregunta: 1,
+      q19_exceso_confianza: 1,
+      q20_dias_antes_estudio: 4,
+      q23_horas_sueno_noche_previa: 7,
+      q25_metodo_repaso: 'Resolver ejercicios o autoevaluarme',
+      q28_porcentaje_companeros: 50,
+      syncedToGoogleSheets: true,
+    };
+
+    await appendResponseToSheet(currentToken, sheetConfig.spreadsheetId, testResponse);
+    showToast('¡Fila de prueba insertada con éxito en Google Sheets!', 'success');
+  };
+
+  // Submit response quietly to Google Sheet without showing URL in the survey
   const handleSurveySubmit = async (formData: Omit<SurveyResponse, 'id' | 'timestamp'>) => {
     setIsSubmitting(true);
 
@@ -201,11 +228,11 @@ export default function App() {
 
     let synced = false;
 
-    // 1. Sync via direct Google Sheets API if connected and token available
+    // Background sync via direct Google Sheets API if configured
     if (sheetConfig && sheetConfig.spreadsheetId && sheetConfig.spreadsheetId !== 'webhook-only') {
       try {
         let currentToken = token;
-        if (!currentToken && user) {
+        if (!currentToken) {
           currentToken = await getAccessToken();
         }
 
@@ -214,17 +241,17 @@ export default function App() {
           synced = true;
         }
       } catch (err: any) {
-        console.warn('Google Sheets append error:', err);
+        console.warn('Google Sheets background sync notice:', err);
       }
     }
 
-    // 2. Also send to Webhook if configured (ideal for distributed anonymous students)
+    // Background sync via Webhook if configured
     if (sheetConfig?.webhookUrl) {
       try {
         await sendToWebhook(sheetConfig.webhookUrl, newResponse);
         synced = true;
       } catch (err) {
-        console.warn('Webhook dispatch warning:', err);
+        console.warn('Webhook dispatch notice:', err);
       }
     }
 
@@ -235,12 +262,6 @@ export default function App() {
     setResponses(updatedResponses);
     setLastSubmittedResponse(newResponse);
     setIsSubmitting(false);
-
-    if (synced) {
-      showToast('¡Respuesta guardada y sincronizada en tu Google Sheet!', 'success');
-    } else {
-      showToast('Respuesta guardada localmente.', 'info');
-    }
 
     setCurrentView('completed');
   };
@@ -283,7 +304,7 @@ export default function App() {
   };
 
   return (
-    <div className="min-h-screen bg-slate-100/70 text-slate-900 flex flex-col font-sans">
+    <div className="min-h-screen bg-slate-50/70 text-slate-900 flex flex-col font-sans">
       {/* Toast Notification */}
       {notification && (
         <div className="fixed bottom-6 right-6 z-50 animate-bounce">
@@ -326,46 +347,20 @@ export default function App() {
 
       {/* Main Content Area */}
       <main className="flex-1 pb-16">
-        {/* Banner if Google Sheets is not yet linked */}
-        {!sheetConfig && currentView === 'survey' && (
-          <div className="bg-emerald-900 text-emerald-100 py-2.5 px-4 text-xs">
-            <div className="max-w-4xl mx-auto flex items-center justify-between gap-3">
-              <div className="flex items-center gap-2">
-                <FileSpreadsheet className="w-4 h-4 text-emerald-300 shrink-0" />
-                <span>
-                  <strong>Tip para el docente/administrador:</strong> Conecta tu cuenta de Google
-                  para crear o vincular la hoja de cálculo donde se registrarán las respuestas en
-                  tiempo real.
-                </span>
-              </div>
-              <button
-                type="button"
-                onClick={() => setIsConfigModalOpen(true)}
-                className="underline font-bold text-white hover:text-emerald-200 shrink-0 cursor-pointer"
-              >
-                Conectar ahora
-              </button>
-            </div>
-          </div>
-        )}
-
-        {/* View 1: Survey Form */}
+        {/* View 1: Clean, Distraction-Free Survey Form */}
         {currentView === 'survey' && (
           <SurveyForm
             onSubmit={handleSurveySubmit}
             isSubmitting={isSubmitting}
-            hasGoogleSheetConnected={!!sheetConfig}
           />
         )}
 
-        {/* View 2: Survey Completed Confirmation */}
+        {/* View 2: Clean Confirmation View */}
         {currentView === 'completed' && lastSubmittedResponse && (
           <SurveyCompleted
             lastResponse={lastSubmittedResponse}
-            sheetConfig={sheetConfig}
             onNewSubmission={() => setCurrentView('survey')}
             onViewDashboard={() => setCurrentView('dashboard')}
-            onDownloadCsv={() => downloadResponsesAsCsv([lastSubmittedResponse])}
           />
         )}
 
@@ -384,7 +379,7 @@ export default function App() {
         )}
       </main>
 
-      {/* Google Sheets Config Modal */}
+      {/* Google Sheets Config Modal (Hidden from respondents, opened via header/footer) */}
       <SheetsConfigModal
         isOpen={isConfigModalOpen}
         onClose={() => setIsConfigModalOpen(false)}
@@ -394,26 +389,22 @@ export default function App() {
         onSaveConfig={handleSaveConfig}
         onCreateNewSheet={handleCreateNewSheet}
         onTestConnection={handleTestConnection}
+        onSendTestRow={handleSendTestRow}
       />
 
-      {/* Footer */}
+      {/* Discreet Footer */}
       <footer className="bg-white border-t border-slate-200 py-6 text-center text-xs text-slate-500">
-        <div className="max-w-7xl mx-auto px-4 flex flex-col sm:flex-row items-center justify-between gap-2">
-          <div className="flex items-center gap-2 text-slate-600">
-            <span className="font-semibold text-slate-800">
-              Encuesta de Hábitos y Procrastinación
-            </span>{' '}
-            • 28 Preguntas Académicas
+        <div className="max-w-5xl mx-auto px-4 flex flex-col sm:flex-row items-center justify-between gap-2">
+          <div className="text-slate-600">
+            Encuesta Académica sobre Hábitos de Estudio y Procrastinación
           </div>
-          <div className="flex items-center gap-4 text-slate-400">
-            <span>Sincronización con Google Sheets</span>
-            <span>•</span>
+          <div className="flex items-center gap-3 text-slate-400">
             <button
               type="button"
               onClick={() => setIsConfigModalOpen(true)}
-              className="text-emerald-600 hover:underline font-medium cursor-pointer"
+              className="text-slate-500 hover:text-slate-800 transition-colors cursor-pointer text-[11px]"
             >
-              Configurar Hoja
+              Configurar Google Sheet
             </button>
           </div>
         </div>

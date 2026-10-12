@@ -12,6 +12,19 @@ export interface SheetConfig {
 export const STORAGE_SHEET_CONFIG_KEY = 'survey_sheets_config_v1';
 export const STORAGE_RESPONSES_KEY = 'survey_local_responses_v1';
 
+export const extractSpreadsheetId = (input: string): string => {
+  if (!input) return '';
+  const trimmed = input.trim();
+  const match =
+    trimmed.match(/\/d\/([a-zA-Z0-9-_]+)/) ||
+    trimmed.match(/id=([a-zA-Z0-9-_]+)/) ||
+    trimmed.match(/([a-zA-Z0-9-_]{20,})/);
+  if (match && match[1]) {
+    return match[1];
+  }
+  return trimmed;
+};
+
 export const getStoredSheetConfig = (): SheetConfig | null => {
   try {
     const raw = localStorage.getItem(STORAGE_SHEET_CONFIG_KEY);
@@ -50,7 +63,6 @@ export const addStoredResponse = (newResponse: SurveyResponse): SurveyResponse[]
 };
 
 export const responseToRowValues = (res: SurveyResponse): (string | number)[] => {
-  // Calculate average reasons score
   const reasons = [
     res.q9_miedo_calificacion,
     res.q10_falta_confianza,
@@ -72,12 +84,12 @@ export const responseToRowValues = (res: SurveyResponse): (string | number)[] =>
     res.id,
     res.timestamp,
     res.q1_carrera_ciclo || '',
-    res.q2_asignatura_fecha || '',
-    res.q3_demora_examenes ?? '',
-    res.q4_problema_examenes ?? '',
-    res.q5_reducir_examenes ?? '',
-    res.q6_demora_tareas ?? '',
-    res.q7_problema_tareas ?? '',
+    res.q2_materias_perdidas ?? 0,
+    res.q3_ciclo_mas_alto ?? 1,
+    res.q4_demora_examenes ?? '',
+    res.q5_problema_examenes ?? '',
+    res.q6_reducir_examenes ?? '',
+    res.q7_demora_tareas ?? '',
     res.q8_reducir_tareas ?? '',
     res.q9_miedo_calificacion ?? '',
     res.q10_falta_confianza ?? '',
@@ -91,14 +103,9 @@ export const responseToRowValues = (res: SurveyResponse): (string | number)[] =>
     res.q18_dudas_no_pregunta ?? '',
     res.q19_exceso_confianza ?? '',
     res.q20_dias_antes_estudio ?? 0,
-    res.q21_horas_ultimos_3_dias ?? 0,
-    res.q22_horas_11_dias_previos ?? 0,
     res.q23_horas_sueno_noche_previa ?? 0,
-    res.q24_horario_calendario || '',
     res.q25_metodo_repaso || '',
     res.q25_metodo_repaso_otro || '',
-    res.q26_anticipacion_entrega || '',
-    res.q27_consulta_docente || '',
     res.q28_porcentaje_companeros ?? 0,
     avgReasons,
   ];
@@ -106,7 +113,6 @@ export const responseToRowValues = (res: SurveyResponse): (string | number)[] =>
 
 /**
  * Creates a brand new Google Spreadsheet in the user's Google Drive
- * with a preformatted header row for all 28 survey fields.
  */
 export const createSurveySpreadsheet = async (
   accessToken: string,
@@ -116,7 +122,6 @@ export const createSurveySpreadsheet = async (
     customTitle ||
     `Respuestas - Encuesta Procrastinación (${new Date().toLocaleDateString('es-ES')})`;
 
-  // 1. Create Spreadsheet
   const createRes = await fetch('https://sheets.googleapis.com/v4/spreadsheets', {
     method: 'POST',
     headers: {
@@ -124,16 +129,12 @@ export const createSurveySpreadsheet = async (
       'Content-Type': 'application/json',
     },
     body: JSON.stringify({
-      properties: {
-        title,
-      },
+      properties: { title },
       sheets: [
         {
           properties: {
             title: 'Respuestas',
-            gridProperties: {
-              frozenRowCount: 1,
-            },
+            gridProperties: { frozenRowCount: 1 },
           },
         },
       ],
@@ -153,8 +154,8 @@ export const createSurveySpreadsheet = async (
   const spreadsheetUrl =
     sheetData.spreadsheetUrl || `https://docs.google.com/spreadsheets/d/${spreadsheetId}/edit`;
 
-  // 2. Add formatted Headers
-  const headerRes = await fetch(
+  // Append formatted Headers
+  await fetch(
     `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/Respuestas!A1:append?valueInputOption=USER_ENTERED`,
     {
       method: 'POST',
@@ -166,11 +167,7 @@ export const createSurveySpreadsheet = async (
         values: [CSV_HEADERS],
       }),
     }
-  );
-
-  if (!headerRes.ok) {
-    console.warn('Headers append notice:', await headerRes.text());
-  }
+  ).catch(() => {});
 
   return { spreadsheetId, spreadsheetUrl };
 };
@@ -185,7 +182,7 @@ export const appendResponseToSheet = async (
 ): Promise<boolean> => {
   const row = responseToRowValues(response);
 
-  // Attempt to append to "Respuestas" tab; if it fails, try root sheet
+  // 1. Try appending to 'Respuestas' sheet
   let res = await fetch(
     `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/Respuestas!A1:append?valueInputOption=USER_ENTERED`,
     {
@@ -194,14 +191,12 @@ export const appendResponseToSheet = async (
         Authorization: `Bearer ${accessToken}`,
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({
-        values: [row],
-      }),
+      body: JSON.stringify({ values: [row] }),
     }
   );
 
+  // 2. If 'Respuestas' tab doesn't exist, append to active first sheet
   if (!res.ok) {
-    // Fallback without sheet name in case default is "Hoja 1" or "Sheet1"
     res = await fetch(
       `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/A1:append?valueInputOption=USER_ENTERED`,
       {
@@ -210,9 +205,7 @@ export const appendResponseToSheet = async (
           Authorization: `Bearer ${accessToken}`,
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({
-          values: [row],
-        }),
+        body: JSON.stringify({ values: [row] }),
       }
     );
   }
@@ -221,7 +214,7 @@ export const appendResponseToSheet = async (
     const err = await res.json().catch(() => ({}));
     throw new Error(
       err.error?.message ||
-        `Error al enviar datos a Google Sheets (${res.status} ${res.statusText})`
+        `Error al registrar en Google Sheets (${res.status} ${res.statusText})`
     );
   }
 
@@ -247,9 +240,7 @@ export const appendBatchToSheet = async (
         Authorization: `Bearer ${accessToken}`,
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({
-        values: rows,
-      }),
+      body: JSON.stringify({ values: rows }),
     }
   );
 
@@ -262,9 +253,7 @@ export const appendBatchToSheet = async (
           Authorization: `Bearer ${accessToken}`,
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({
-          values: rows,
-        }),
+        body: JSON.stringify({ values: rows }),
       }
     );
   }
@@ -282,24 +271,21 @@ export const appendBatchToSheet = async (
 
 /**
  * Optional Webhook integration (Google Apps Script)
- * Useful for public distribution when survey respondents submit anonymously
  */
 export const sendToWebhook = async (
   webhookUrl: string,
   response: SurveyResponse
 ): Promise<boolean> => {
   try {
-    const res = await fetch(webhookUrl, {
+    await fetch(webhookUrl, {
       method: 'POST',
-      mode: 'no-cors', // Standard for Apps Script redirects
-      headers: {
-        'Content-Type': 'application/json',
-      },
+      mode: 'no-cors',
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(response),
     });
     return true;
   } catch (err) {
-    console.warn('Webhook error:', err);
+    console.warn('Webhook dispatch error:', err);
     return false;
   }
 };
@@ -347,25 +333,23 @@ export const downloadResponsesAsJson = (responses: SurveyResponse[]) => {
   URL.revokeObjectURL(url);
 };
 
-export const sampleAppsScriptCode = `// Código para Google Apps Script (Extensiones > Apps Script en tu Hoja de Cálculo)
+export const sampleAppsScriptCode = `// Código para Google Apps Script (Extensiones > Apps Script en tu Hoja)
 function doPost(e) {
   try {
     var sheet = SpreadsheetApp.getActiveSpreadsheet().getActiveSheet();
     var data = JSON.parse(e.postData.contents);
     
-    // Si la hoja está vacía, agregar encabezados
     if (sheet.getLastRow() === 0) {
       sheet.appendRow([
-        "ID", "Marca Temporal", "Q1 Carrera y Ciclo", "Q2 Asignatura y Fecha",
-        "Q3 Demora Exámenes", "Q4 Problema Exámenes", "Q5 Reducir Exámenes",
-        "Q6 Demora Tareas", "Q7 Problema Tareas", "Q8 Reducir Tareas",
+        "ID", "Marca Temporal", "Q1 Carrera y Ciclo", "Q2 Materias Perdidas",
+        "Q3 Ciclo Más Alto", "Q4 Demora Exámenes", "Q5 Problema Exámenes",
+        "Q6 Reducir Exámenes", "Q7 Demora Tareas", "Q8 Reducir Tareas",
         "Q9 Miedo Mala Calificación", "Q10 Falta Confianza", "Q11 Desbordado",
         "Q12 Otras Cosas", "Q13 No Gusta Estudiar", "Q14 Dificultad Priorizar",
         "Q15 Compañeros No Estudian", "Q16 Presión Amigos", "Q17 Rechazo Plazos",
         "Q18 Dudas No Pregunta", "Q19 Exceso Confianza",
-        "Q20 Días Antes Estudio", "Q21 Horas Últimos 3 Días", "Q22 Horas 11 Días Previos",
-        "Q23 Horas Sueño Previa", "Q24 Horario Calendario", "Q25 Método Repaso",
-        "Q25 Otro", "Q26 Anticipación Entrega", "Q27 Consulta Docente", "Q28 % Compañeros"
+        "Q20 Días Antes Estudio", "Q23 Horas Sueño Previa", "Q25 Método Repaso",
+        "Q25 Otro", "Q28 % Compañeros"
       ]);
     }
     
@@ -373,12 +357,12 @@ function doPost(e) {
       data.id || new Date().getTime(),
       data.timestamp || new Date().toLocaleString(),
       data.q1_carrera_ciclo || "",
-      data.q2_asignatura_fecha || "",
-      data.q3_demora_examenes || "",
-      data.q4_problema_examenes || "",
-      data.q5_reducir_examenes || "",
-      data.q6_demora_tareas || "",
-      data.q7_problema_tareas || "",
+      data.q2_materias_perdidas || 0,
+      data.q3_ciclo_mas_alto || 1,
+      data.q4_demora_examenes || "",
+      data.q5_problema_examenes || "",
+      data.q6_reducir_examenes || "",
+      data.q7_demora_tareas || "",
       data.q8_reducir_tareas || "",
       data.q9_miedo_calificacion || "",
       data.q10_falta_confianza || "",
@@ -392,14 +376,9 @@ function doPost(e) {
       data.q18_dudas_no_pregunta || "",
       data.q19_exceso_confianza || "",
       data.q20_dias_antes_estudio || 0,
-      data.q21_horas_ultimos_3_dias || 0,
-      data.q22_horas_11_dias_previos || 0,
       data.q23_horas_sueno_noche_previa || 0,
-      data.q24_horario_calendario || "",
       data.q25_metodo_repaso || "",
       data.q25_metodo_repaso_otro || "",
-      data.q26_anticipacion_entrega || "",
-      data.q27_consulta_docente || "",
       data.q28_porcentaje_companeros || 0
     ]);
     

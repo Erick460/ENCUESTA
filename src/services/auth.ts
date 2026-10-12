@@ -7,7 +7,7 @@ import {
   signOut,
   User,
 } from 'firebase/auth';
-import firebaseConfig from '../../firebase-applet-config.json';
+import firebaseConfig from '@/firebase-applet-config.json';
 
 const app = initializeApp(firebaseConfig);
 export const auth = getAuth(app);
@@ -21,27 +21,24 @@ const provider = new GoogleAuthProvider();
 for (const scope of SCOPES) {
   provider.addScope(scope);
 }
+// Prompt account selection
+provider.setCustomParameters({
+  prompt: 'select_account',
+});
 
 // In-memory token cache (never stored in localStorage or sessionStorage)
 let cachedAccessToken: string | null = null;
 let isSigningIn = false;
 
 export const initAuth = (
-  onAuthSuccess?: (user: User, token: string) => void,
-  onAuthFailure?: () => void
+  onUserChange: (user: User | null, token: string | null) => void
 ) => {
   return onAuthStateChanged(auth, async (user: User | null) => {
     if (user) {
-      if (cachedAccessToken) {
-        if (onAuthSuccess) onAuthSuccess(user, cachedAccessToken);
-      } else if (!isSigningIn) {
-        // Token not available in memory; prompt sign in when user tries to interact with Sheets
-        cachedAccessToken = null;
-        if (onAuthFailure) onAuthFailure();
-      }
+      onUserChange(user, cachedAccessToken);
     } else {
       cachedAccessToken = null;
-      if (onAuthFailure) onAuthFailure();
+      onUserChange(null, null);
     }
   });
 };
