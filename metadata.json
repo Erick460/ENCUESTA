@@ -1,0 +1,6 @@
+{
+  "name": "Encuesta de Hábitos de Estudio y Procrastinación",
+  "description": "Cuestionario académico de 28 preguntas sobre procrastinación y hábitos de estudio con conexión directa a Google Sheets.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
